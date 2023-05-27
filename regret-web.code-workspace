@@ -1,0 +1,14 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "rust-analyzer.linkedProjects": [
+            "backend/engine/Cargo.toml",
+            "backend/actix_api/Cargo.toml",
+            "backend/symbolic_manipulation/Cargo.toml",
+        ]
+    }
+}
