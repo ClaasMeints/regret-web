@@ -78,131 +78,6 @@ struct OperatorExpression {
     operands: Vec<Expression>,
 }
 
-impl OperatorExpression {
-    fn simplify(&mut self) {
-        for operand in &mut self.operands {
-            operand.simplify();
-        }
-        match self.operator {
-            Operator::Addition => {
-                self.merge_addition();
-                self.sum_up();
-            }
-            _ => {}
-        }
-    }
-
-    // called on additions, if the child is also an additive expression, the children are merged
-    fn merge_addition(&mut self) {
-        let mut operands = Vec::<Expression>::new();
-        for operand in &self.operands {
-            if let Expression::OperatorExpression(operand) = operand {
-                if operand.operator == Operator::Addition {
-                    operands.extend(operand.operands.clone()); // include the children of the child, but not the child itself -> merge
-                } else {
-                    operands.push(Expression::OperatorExpression(operand.clone()));
-                    // normally add the child expression (e.g multiplication)
-                }
-            } else {
-                operands.push(operand.clone()); // normally add the child symbol
-            }
-        }
-        self.operands.clear();
-        self.operands.extend(operands);
-    }
-
-    // called on additions, if it contains multiple symbols with the same address, they are merged
-    fn sum_up(&mut self) {
-        let mut found_symbols = HashMap::<String, i128>::new();
-        let mut operands_to_remove = Vec::<usize>::new();
-        for (operand_index, operand) in self.operands.iter().enumerate() {
-            match operand {
-                Expression::Symbol(symbol) => {
-                    operands_to_remove.push(operand_index); // remove the symbol from the expression (possibly add it again if v = 1)
-                                                            // not just skip it, because 1 might be 1 - 1 + 1 = 1 -> 3 symbols removed, zero added
-                    if found_symbols.contains_key(symbol.name.to_string().as_str()) {
-                        *found_symbols
-                            .get_mut(symbol.name.to_string().as_str())
-                            .unwrap() += 1;
-                    } else {
-                        found_symbols.insert(symbol.name.to_string(), 1);
-                    }
-                }
-                Expression::OperatorExpression(operand) => match operand.operator {
-                    Operator::Negation => {
-                        // -x
-                        if let Expression::Symbol(symbol) = &operand.operands[0] {
-                            operands_to_remove.push(operand_index);
-                            if found_symbols.contains_key(symbol.name.to_string().as_str()) {
-                                *found_symbols
-                                    .get_mut(symbol.name.to_string().as_str())
-                                    .unwrap() -= 1;
-                            } else {
-                                found_symbols.insert(symbol.name.to_string(), -1);
-                            }
-                        }
-                    }
-                    Operator::Multiplication => {
-                        // x * Constant | Constant * x
-                        if operand.operands.len() == 2 {
-                            if let Expression::Symbol(symbol) = &operand.operands[0] {
-                                if let Expression::Constant(constant) = &operand.operands[1] {
-                                    operands_to_remove.push(operand_index);
-                                    if found_symbols.contains_key(symbol.name.to_string().as_str())
-                                    {
-                                        *found_symbols
-                                            .get_mut(symbol.name.to_string().as_str())
-                                            .unwrap() += *constant;
-                                    } else {
-                                        found_symbols.insert(symbol.name.to_string(), *constant);
-                                    }
-                                }
-                            }
-                            if let Expression::Symbol(symbol) = &operand.operands[1] {
-                                if let Expression::Constant(constant) = &operand.operands[0] {
-                                    operands_to_remove.push(operand_index);
-                                    if found_symbols.contains_key(symbol.name.to_string().as_str())
-                                    {
-                                        *found_symbols
-                                            .get_mut(symbol.name.to_string().as_str())
-                                            .unwrap() += *constant;
-                                    } else {
-                                        found_symbols.insert(symbol.name.to_string(), *constant);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-        for operand_index in operands_to_remove {
-            self.operands.remove(operand_index);
-        }
-        for (symbol_name, value) in found_symbols {
-            match value {
-                0 => {}
-                1 => self
-                    .operands
-                    .push(Expression::Symbol(Symbol::new(symbol_name))),
-                _ => self
-                    .operands
-                    .push(Expression::OperatorExpression(OperatorExpression {
-                        operator: Operator::Multiplication,
-                        operands: vec![
-                            Expression::Constant(value),
-                            Expression::Symbol(Symbol::new(symbol_name)),
-                        ],
-                    })),
-            }
-        }
-    }
-
-    // TODO: negation(x * const) -> x * -const <- found by sum_up
-}
-
 #[derive(Clone)]
 enum Expression {
     Constant(i128),
@@ -255,7 +130,11 @@ impl Expression {
             Expression::OperatorExpression(operator_expression) => {
                 match operator_expression.operator {
                     Operator::Negation => self.double_negation(),
-                    _ => operator_expression.simplify(),
+                    Operator::Addition => {
+                        self.merge_addition();
+                        self.sum_up();
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -264,14 +143,135 @@ impl Expression {
 
     // called on negations, if the child is also a negation, the child moves up and the parent is deleted
     fn double_negation(&mut self) {
-        if let Expression::OperatorExpression(outer_operator) = self {
-            if let Expression::OperatorExpression(operand) = &mut outer_operator.operands[0] {
+        if let Expression::OperatorExpression(operator_expression) = self {
+            if let Expression::OperatorExpression(operand) = &mut operator_expression.operands[0] {
                 if operand.operator == Operator::Negation {
                     *self = operand.operands[0].clone();
                 }
             }
         }
     }
+
+    // called on additions, if the child is also an additive expression, the children are merged
+    fn merge_addition(&mut self) {
+        if let Expression::OperatorExpression(operator_expression) = self {
+            let mut operands = Vec::<Expression>::new();
+            for operand in &operator_expression.operands {
+                if let Expression::OperatorExpression(operand) = operand {
+                    if operand.operator == Operator::Addition {
+                        operands.extend(operand.operands.clone()); // include the children of the child, but not the child itself -> merge
+                    } else {
+                        operands.push(Expression::OperatorExpression(operand.clone()));
+                        // normally add the child expression (e.g multiplication)
+                    }
+                } else {
+                    operands.push(operand.clone()); // normally add the child symbol
+                }
+            }
+            operator_expression.operands.clear();
+            operator_expression.operands.extend(operands);
+        }
+    }
+
+    // called on additions, if it contains multiple symbols with the same address, they are merged
+    fn sum_up(&mut self) {
+        if let Expression::OperatorExpression(operator_expression) = self {
+            let mut found_symbols = HashMap::<String, i128>::new();
+            let mut operands_to_remove = Vec::<usize>::new();
+            for (operand_index, operand) in operator_expression.operands.iter().enumerate() {
+                match operand {
+                    Expression::Symbol(symbol) => {
+                        operands_to_remove.push(operand_index); // remove the symbol from the expression (possibly add it again if v = 1)
+                                                                // not just skip it, because 1 might be 1 - 1 + 1 = 1 -> 3 symbols removed, zero added
+                        if found_symbols.contains_key(symbol.name.to_string().as_str()) {
+                            *found_symbols
+                                .get_mut(symbol.name.to_string().as_str())
+                                .unwrap() += 1;
+                        } else {
+                            found_symbols.insert(symbol.name.to_string(), 1);
+                        }
+                    }
+                    Expression::OperatorExpression(operand) => match operand.operator {
+                        Operator::Negation => {
+                            // -x
+                            if let Expression::Symbol(symbol) = &operand.operands[0] {
+                                operands_to_remove.push(operand_index);
+                                if found_symbols.contains_key(symbol.name.to_string().as_str()) {
+                                    *found_symbols
+                                        .get_mut(symbol.name.to_string().as_str())
+                                        .unwrap() -= 1;
+                                } else {
+                                    found_symbols.insert(symbol.name.to_string(), -1);
+                                }
+                            }
+                        }
+                        Operator::Multiplication => {
+                            // x * Constant | Constant * x
+                            if operand.operands.len() == 2 {
+                                if let Expression::Symbol(symbol) = &operand.operands[0] {
+                                    if let Expression::Constant(constant) = &operand.operands[1] {
+                                        operands_to_remove.push(operand_index);
+                                        if found_symbols
+                                            .contains_key(symbol.name.to_string().as_str())
+                                        {
+                                            *found_symbols
+                                                .get_mut(symbol.name.to_string().as_str())
+                                                .unwrap() += *constant;
+                                        } else {
+                                            found_symbols
+                                                .insert(symbol.name.to_string(), *constant);
+                                        }
+                                    }
+                                }
+                                if let Expression::Symbol(symbol) = &operand.operands[1] {
+                                    if let Expression::Constant(constant) = &operand.operands[0] {
+                                        operands_to_remove.push(operand_index);
+                                        if found_symbols
+                                            .contains_key(symbol.name.to_string().as_str())
+                                        {
+                                            *found_symbols
+                                                .get_mut(symbol.name.to_string().as_str())
+                                                .unwrap() += *constant;
+                                        } else {
+                                            found_symbols
+                                                .insert(symbol.name.to_string(), *constant);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            for operand_index in operands_to_remove.iter().rev() {
+                operator_expression.operands.remove(*operand_index);
+            }
+            for (symbol_name, value) in found_symbols {
+                match value {
+                    0 => {}
+                    1 => operator_expression
+                        .operands
+                        .push(Expression::Symbol(Symbol::new(symbol_name))),
+                    _ => operator_expression
+                        .operands
+                        .push(Expression::OperatorExpression(OperatorExpression {
+                            operator: Operator::Multiplication,
+                            operands: vec![
+                                Expression::Constant(value),
+                                Expression::Symbol(Symbol::new(symbol_name)),
+                            ],
+                        })),
+                }
+            }
+            if operator_expression.operands.len() == 1 {
+                *self = operator_expression.operands[0].clone();
+            }
+        }
+    }
+
+    // TODO: negation(x * const) -> x * -const <- found by sum_up
 }
 
 impl fmt::Display for Expression {
@@ -300,6 +300,27 @@ macro_rules! expr {
     };
     ($operator:ident, $operand1:expr, $operand2:expr) => {
         Expression::new(Operator::$operator, vec![$operand1, $operand2])
+    };
+    ($operator:ident, $operand1:expr, $operand2:expr, $operand3:expr) => {
+        Expression::new(Operator::$operator, vec![$operand1, $operand2, $operand3])
+    };
+    ($operator:ident, $operand1:expr, $operand2:expr, $operand3:expr, $operand4:expr) => {
+        Expression::new(
+            Operator::$operator,
+            vec![$operand1, $operand2, $operand3, $operand4],
+        )
+    };
+    ($operator:ident, $operand1:expr, $operand2:expr, $operand3:expr, $operand4:expr, $operand5:expr) => {
+        Expression::new(
+            Operator::$operator,
+            vec![$operand1, $operand2, $operand3, $operand4, $operand5],
+        )
+    };
+}
+
+macro_rules! number {
+    ($el:expr) => {
+        Ok(Expression::Constant($el))
     };
 }
 
@@ -344,6 +365,24 @@ mod tests {
             expr.simplify();
         }
         assert_eq!(format!("{}", expr.unwrap()), "(* 3 x)");
+        // x + 2 * x - 7 * x + y + 2 * y + 3 * y
+        let y = Symbol::new("y".to_string());
+        let mut expr = expr!(
+            Addition,
+            expr!(
+                Addition,
+                expr!(x),
+                expr!(Multiplication, number!(2), expr!(x))
+            ),
+            expr!(Negation, expr!(Multiplication, number!(7), expr!(x))),
+            expr!(y),
+            expr!(Multiplication, number!(2), expr!(y)),
+            expr!(Multiplication, number!(3), expr!(y))
+        );
+        if let Result::Ok(expr) = &mut expr {
+            expr.simplify();
+        }
+        assert_eq!(format!("{}", expr.unwrap()), "(+ (* -4 x) (* 6 y))");
     }
 }
 
