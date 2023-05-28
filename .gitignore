@@ -20,3 +20,5 @@ Cargo.lock
 # VSCode directory
 .vscode/
 
+# Github directory
+.github/

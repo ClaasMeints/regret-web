@@ -3,12 +3,7 @@
 use core::fmt;
 use std::collections::HashMap;
 
-#[derive(Clone)]
-enum Number {
-    Complex(f64, f64),
-}
-
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct Symbol {
     name: String,
 }
@@ -25,9 +20,10 @@ impl fmt::Display for Symbol {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 enum Operator {
     Negation,
+    Reciprocal,
     Factorial,
     Addition,
     Subtraction,
@@ -38,6 +34,7 @@ enum Operator {
     Root,
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
 enum Size {
     Finite(usize),
     Infinite,
@@ -46,12 +43,52 @@ enum Size {
 impl Operator {
     fn arity(&self) -> Size {
         match self {
-            Operator::Negation | Operator::Factorial => Size::Finite(1),
+            Operator::Negation | Operator::Factorial | Operator::Reciprocal => Size::Finite(1),
             Operator::Addition
             | Operator::Subtraction
             | Operator::Multiplication
             | Operator::Division => Size::Infinite,
             Operator::Exponentiation | Operator::Logarithm | Operator::Root => Size::Finite(2),
+        }
+    }
+
+    fn precedence(&self) -> u8 {
+        match self {
+            Operator::Negation | Operator::Reciprocal | Operator::Factorial => 4,
+            Operator::Exponentiation => 3,
+            Operator::Logarithm | Operator::Root => 2,
+            Operator::Multiplication | Operator::Division => 1,
+            Operator::Addition | Operator::Subtraction => 0,
+        }
+    }
+
+    fn is_left_associative(&self) -> bool {
+        matches!(
+            self,
+            Operator::Addition
+                | Operator::Subtraction
+                | Operator::Multiplication
+                | Operator::Division
+        )
+    }
+
+    fn is_right_associative(&self) -> bool {
+        !self.is_left_associative()
+    }
+
+    fn is_commutative(&self) -> bool {
+        matches!(self, Operator::Addition | Operator::Multiplication)
+    }
+
+    fn is_associative(&self) -> bool {
+        matches!(self, Operator::Addition | Operator::Multiplication)
+    }
+
+    fn is_distributive_under(&self) -> Option<Operator> {
+        match self {
+            Operator::Addition => Some(Operator::Multiplication),
+            Operator::Multiplication => Some(Operator::Exponentiation),
+            _ => None,
         }
     }
 }
@@ -60,9 +97,10 @@ impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Operator::Negation => write!(f, "-"),
+            Operator::Reciprocal => write!(f, "1/"),
             Operator::Factorial => write!(f, "!"),
             Operator::Addition => write!(f, "+"),
-            Operator::Subtraction => write!(f, "-"), // unexsitent
+            Operator::Subtraction => write!(f, "-"), // inexistent
             Operator::Multiplication => write!(f, "*"),
             Operator::Division => write!(f, "/"),
             Operator::Exponentiation => write!(f, "^"),
@@ -72,24 +110,17 @@ impl fmt::Display for Operator {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 struct OperatorExpression {
     operator: Operator,
     operands: Vec<Expression>,
 }
 
-#[derive(Clone)]
-enum Expression {
-    Constant(i128),
-    Symbol(Symbol),
-    OperatorExpression(OperatorExpression),
-}
-
-impl Expression {
+impl OperatorExpression {
     fn new(
         operator: Operator,
         operands: Vec<Result<Expression, String>>,
-    ) -> Result<Expression, String> {
+    ) -> Result<OperatorExpression, String> {
         match operator.arity() {
             Size::Finite(arity) => {
                 if operands.len() != arity {
@@ -111,33 +142,144 @@ impl Expression {
                 }
             }
         }
-        for operand in &operands {
-            if operand.is_err() {
-                return Err(operand.as_ref().unwrap().to_string());
+        operands
+            .into_iter()
+            .collect::<Result<Vec<Expression>, String>>() // convert Vec<Result> to Result<Vec>
+            .map(|result_operands| OperatorExpression {
+                operator,
+                operands: result_operands,
+            }) // map Result<Vec> to Result<OperatorExpression>
+    }
+}
+
+impl fmt::Display for OperatorExpression {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.operator)?;
+        let mut iter = self.operands.iter();
+        if let Some(first) = iter.next() {
+            write!(f, "{}", first)?;
+            for item in iter {
+                write!(f, ", {}", item)?;
             }
         }
-        Ok(Expression::OperatorExpression(OperatorExpression {
-            operator,
-            operands: operands
-                .into_iter()
-                .map(|operand| operand.unwrap())
-                .collect(),
-        }))
+        Ok(())
+    }
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+enum Expression {
+    Constant(i128),
+    Symbol(Symbol),
+    OperatorExpression(OperatorExpression),
+}
+
+trait ConstructExpression {
+    fn construct_expression(&self) -> Result<Expression, String>;
+}
+
+impl ConstructExpression for i128 {
+    fn construct_expression(&self) -> Result<Expression, String> {
+        Ok(Expression::Constant(*self))
+    }
+}
+
+impl ConstructExpression for Symbol {
+    fn construct_expression(&self) -> Result<Expression, String> {
+        Ok(Expression::Symbol(self.clone()))
+    }
+}
+
+impl ConstructExpression for Result<OperatorExpression, String> {
+    fn construct_expression(&self) -> Result<Expression, String> {
+        self.clone().map(Expression::OperatorExpression)
+    }
+}
+
+trait InlinePush<T> {
+    fn inline_push(&mut self, item: T) -> &mut Self;
+}
+
+impl<T> InlinePush<T> for Vec<T> {
+    fn inline_push(&mut self, item: T) -> &mut Self {
+        self.push(item);
+        self
+    }
+}
+
+trait SafeAdd<K, V> {
+    fn safe_add(&mut self, key: K, value: V);
+}
+
+impl<K, V> SafeAdd<K, V> for HashMap<K, V>
+where
+    K: Copy + std::cmp::Eq + std::hash::Hash,
+    V: std::ops::Add<Output = V> + std::ops::Sub<Output = V> + Copy + std::ops::AddAssign<V>,
+{
+    fn safe_add(&mut self, key: K, value: V) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.entry(key) {
+            e.insert(value);
+        } else {
+            *self.get_mut(&key).unwrap() += value;
+        }
+    }
+}
+
+impl Expression {
+    fn is_equal(&mut self, other: &mut Expression) -> bool {
+        other.simplify();
+        format!("{}", self) == format!("{}", other)
     }
 
     fn simplify(&mut self) {
-        match self {
-            Expression::OperatorExpression(operator_expression) => {
-                match operator_expression.operator {
-                    Operator::Negation => self.double_negation(),
-                    Operator::Addition => {
-                        self.merge_addition();
-                        self.sum_up();
-                    }
-                    _ => {}
-                }
+        if let Expression::OperatorExpression(operator_expression) = self {
+            println!("simplifying {}", operator_expression);
+            for operand in &mut operator_expression.operands {
+                operand.simplify();
             }
-            _ => {}
+            match operator_expression.operator {
+                Operator::Negation => {
+                    self.double_negation();
+                }
+                Operator::Subtraction => {
+                    self.remove_subtraction();
+                }
+                Operator::Addition | Operator::Multiplication => {
+                    self.merge();
+                    self.factor_out();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn remove_subtraction(&mut self) {
+        if let Expression::OperatorExpression(operator_expression) = self {
+            if let Result::Ok(expression) = OperatorExpression::new(
+                Operator::Addition,
+                vec![
+                    Ok(operator_expression.operands[0].clone()),
+                    OperatorExpression::new(
+                        Operator::Negation,
+                        vec![OperatorExpression::new(
+                            Operator::Addition,
+                            operator_expression.operands[1..]
+                                .iter()
+                                .cloned()
+                                .map(Ok)
+                                .collect::<Vec<Result<Expression, String>>>()
+                                .inline_push(Ok(Expression::Constant(0)))
+                                .clone(),
+                        )
+                        .construct_expression()],
+                    )
+                    .construct_expression(),
+                ],
+            )
+            .construct_expression()
+            {
+                *self = expression;
+            }
+            self.simplify();
         }
     }
 
@@ -152,17 +294,17 @@ impl Expression {
         }
     }
 
-    // called on additions, if the child is also an additive expression, the children are merged
-    fn merge_addition(&mut self) {
+    // called on associative operators, if the child is of the same type, the children are merged
+    fn merge(&mut self) {
         if let Expression::OperatorExpression(operator_expression) = self {
             let mut operands = Vec::<Expression>::new();
             for operand in &operator_expression.operands {
                 if let Expression::OperatorExpression(operand) = operand {
-                    if operand.operator == Operator::Addition {
+                    if operand.operator == operator_expression.operator {
                         operands.extend(operand.operands.clone()); // include the children of the child, but not the child itself -> merge
                     } else {
                         operands.push(Expression::OperatorExpression(operand.clone()));
-                        // normally add the child expression (e.g multiplication)
+                        // normally add the child expression
                     }
                 } else {
                     operands.push(operand.clone()); // normally add the child symbol
@@ -171,104 +313,73 @@ impl Expression {
             operator_expression.operands.clear();
             operator_expression.operands.extend(operands);
         }
+        self.simplify();
     }
 
-    // called on additions, if it contains multiple symbols with the same address, they are merged
-    fn sum_up(&mut self) {
+    fn factor_out(&mut self) {
         if let Expression::OperatorExpression(operator_expression) = self {
-            let mut found_symbols = HashMap::<String, i128>::new();
-            let mut operands_to_remove = Vec::<usize>::new();
-            for (operand_index, operand) in operator_expression.operands.iter().enumerate() {
-                match operand {
-                    Expression::Symbol(symbol) => {
-                        operands_to_remove.push(operand_index); // remove the symbol from the expression (possibly add it again if v = 1)
-                                                                // not just skip it, because 1 might be 1 - 1 + 1 = 1 -> 3 symbols removed, zero added
-                        if found_symbols.contains_key(symbol.name.to_string().as_str()) {
-                            *found_symbols
-                                .get_mut(symbol.name.to_string().as_str())
-                                .unwrap() += 1;
-                        } else {
-                            found_symbols.insert(symbol.name.to_string(), 1);
+            if let Some(distributive_operator) =
+                operator_expression.operator.is_distributive_under()
+            {
+                let mut found_expressions = HashMap::<&Expression, i128>::new();
+                for operand in operator_expression.operands.iter() {
+                    if let Expression::OperatorExpression(operand) = operand {
+                        if let Operator::Negation = operand.operator {
+                            // -x -> -1 * x
+                            found_expressions.safe_add(&operand.operands[0], -1);
+                        }
+
+                        // first check if the operand is (distributive_operator constant expression)
+                        if operand.operator != distributive_operator {
+                            continue;
+                        }
+                        // -> HashMap[expression] += constant
+                        // e.g. x + 3 * x -> 4 * x
+                        if operand.operands.len() != 2 {
+                            continue;
+                        }
+                        if let Expression::Constant(constant) = &operand.operands[0] {
+                            found_expressions.safe_add(&operand.operands[1], *constant);
+                        }
+                        if let Expression::Constant(constant) = &operand.operands[1] {
+                            found_expressions.safe_add(&operand.operands[0], *constant);
                         }
                     }
-                    Expression::OperatorExpression(operand) => match operand.operator {
-                        Operator::Negation => {
-                            // -x
-                            if let Expression::Symbol(symbol) = &operand.operands[0] {
-                                operands_to_remove.push(operand_index);
-                                if found_symbols.contains_key(symbol.name.to_string().as_str()) {
-                                    *found_symbols
-                                        .get_mut(symbol.name.to_string().as_str())
-                                        .unwrap() -= 1;
-                                } else {
-                                    found_symbols.insert(symbol.name.to_string(), -1);
-                                }
-                            }
-                        }
-                        Operator::Multiplication => {
-                            // x * Constant | Constant * x
-                            if operand.operands.len() == 2 {
-                                if let Expression::Symbol(symbol) = &operand.operands[0] {
-                                    if let Expression::Constant(constant) = &operand.operands[1] {
-                                        operands_to_remove.push(operand_index);
-                                        if found_symbols
-                                            .contains_key(symbol.name.to_string().as_str())
-                                        {
-                                            *found_symbols
-                                                .get_mut(symbol.name.to_string().as_str())
-                                                .unwrap() += *constant;
-                                        } else {
-                                            found_symbols
-                                                .insert(symbol.name.to_string(), *constant);
-                                        }
-                                    }
-                                }
-                                if let Expression::Symbol(symbol) = &operand.operands[1] {
-                                    if let Expression::Constant(constant) = &operand.operands[0] {
-                                        operands_to_remove.push(operand_index);
-                                        if found_symbols
-                                            .contains_key(symbol.name.to_string().as_str())
-                                        {
-                                            *found_symbols
-                                                .get_mut(symbol.name.to_string().as_str())
-                                                .unwrap() += *constant;
-                                        } else {
-                                            found_symbols
-                                                .insert(symbol.name.to_string(), *constant);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
-                    _ => {}
+                    found_expressions.safe_add(operand, 1);
                 }
-            }
-            for operand_index in operands_to_remove.iter().rev() {
-                operator_expression.operands.remove(*operand_index);
-            }
-            for (symbol_name, value) in found_symbols {
-                match value {
-                    0 => {}
-                    1 => operator_expression
-                        .operands
-                        .push(Expression::Symbol(Symbol::new(symbol_name))),
-                    _ => operator_expression
-                        .operands
-                        .push(Expression::OperatorExpression(OperatorExpression {
-                            operator: Operator::Multiplication,
-                            operands: vec![
-                                Expression::Constant(value),
-                                Expression::Symbol(Symbol::new(symbol_name)),
-                            ],
-                        })),
+                // the Hash map now contains all expressions and their coefficients
+                found_expressions.retain(|_, value| *value != 0);
+                // the new operands are (distributive_operator coefficient expression)
+                // e.g. x + 4 * x + y -> 5 * x + y
+                // or y * y -> y ^ 2
+                let new_operands = found_expressions
+                    .into_iter()
+                    .map(|(expression, coefficient)| {
+                        if coefficient == 1 {
+                            Ok(expression.clone())
+                        } else {
+                            OperatorExpression::new(
+                                distributive_operator.clone(),
+                                vec![Expression::Constant(coefficient), expression.clone()]
+                                    .into_iter()
+                                    .map(Ok)
+                                    .collect::<Vec<Result<Expression, String>>>(),
+                            )
+                            .construct_expression()
+                        }
+                    })
+                    .collect::<Result<Vec<Expression>, String>>();
+                if let Result::Ok(new_operands) = new_operands {
+                    if new_operands.len() == 1 {
+                        // if n = 1 the operator changes to the distributive operator)
+                        *self = new_operands[0].clone();
+                    } else {
+                        operator_expression.operands = new_operands;
+                    }
                 }
-            }
-            if operator_expression.operands.len() == 1 {
-                *self = operator_expression.operands[0].clone();
             }
         }
+        self.simplify();
     }
 
     // TODO: negation(x * const) -> x * -const <- found by sum_up
@@ -290,37 +401,24 @@ impl fmt::Display for Expression {
     }
 }
 
-// macro to simplify creation of expressions
-macro_rules! expr {
-    ($symbol:expr) => {
-        Ok(Expression::Symbol($symbol.clone()))
-    };
-    ($operator:ident, $operand:expr) => {
-        Expression::new(Operator::$operator, vec![$operand])
-    };
-    ($operator:ident, $operand1:expr, $operand2:expr) => {
-        Expression::new(Operator::$operator, vec![$operand1, $operand2])
-    };
-    ($operator:ident, $operand1:expr, $operand2:expr, $operand3:expr) => {
-        Expression::new(Operator::$operator, vec![$operand1, $operand2, $operand3])
-    };
-    ($operator:ident, $operand1:expr, $operand2:expr, $operand3:expr, $operand4:expr) => {
-        Expression::new(
-            Operator::$operator,
-            vec![$operand1, $operand2, $operand3, $operand4],
-        )
-    };
-    ($operator:ident, $operand1:expr, $operand2:expr, $operand3:expr, $operand4:expr, $operand5:expr) => {
-        Expression::new(
-            Operator::$operator,
-            vec![$operand1, $operand2, $operand3, $operand4, $operand5],
-        )
+// macro to create trees of symbols and operators
+macro_rules! sym {
+    ($name: expr) => {
+        Symbol::new($name.to_string()).construct_expression()
     };
 }
-
-macro_rules! number {
-    ($el:expr) => {
-        Ok(Expression::Constant($el))
+macro_rules! expr {
+    ($constant: expr) => {
+        $constant.construct_expression()
+    };
+    ($operator: ident, $($operand: expr),*) => {
+        OperatorExpression::new(
+            Operator::$operator,
+            vec![
+                $($operand),*
+            ],
+        )
+        .construct_expression()
     };
 }
 
@@ -329,184 +427,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_display() {
-        let x = Symbol::new("x".to_string());
-        let expr = expr!(
-            Negation,
-            expr!(
-                Addition,
-                expr!(Multiplication, expr!(x), expr!(x)),
-                expr!(x)
-            )
-        );
-        assert_eq!(format!("{}", expr.unwrap()), "(- (+ (* x x) x))");
+    fn test_manual_creation() {
+        let mut expression = OperatorExpression::new(
+            Operator::Addition,
+            vec![
+                Symbol::new("x".to_string()).construct_expression(),
+                OperatorExpression::new(
+                    Operator::Multiplication,
+                    vec![
+                        2.construct_expression(),
+                        Symbol::new("y".to_string()).construct_expression(),
+                    ],
+                )
+                .construct_expression(),
+            ],
+        )
+        .construct_expression();
+
+        if let Result::Ok(expression) = &mut expression {
+            assert_eq!(format!("{}", expression), "(+ x (* 2 y))");
+        }
     }
 
     #[test]
-    fn test_double_negation() {
-        let x = Symbol::new("x".to_string());
-        let mut expr = expr!(Negation, expr!(Negation, expr!(x)));
-        if let Result::Ok(expr) = &mut expr {
-            expr.simplify();
-        }
-        assert_eq!(format!("{}", expr.unwrap()), "x");
-        let mut expr = expr!(Negation, expr!(Negation, expr!(Negation, expr!(x))));
-        if let Result::Ok(expr) = &mut expr {
-            expr.simplify();
-        }
-        assert_eq!(format!("{}", expr.unwrap()), "(- x)");
-    }
-
-    #[test]
-    fn merge_addition() {
-        let x = Symbol::new("x".to_string());
-        let mut expr = expr!(Addition, expr!(Addition, expr!(x), expr!(x)), expr!(x));
-        if let Result::Ok(expr) = &mut expr {
-            expr.simplify();
-        }
-        assert_eq!(format!("{}", expr.unwrap()), "(* 3 x)");
-        // x + 2 * x - 7 * x + y + 2 * y + 3 * y
-        let y = Symbol::new("y".to_string());
-        let mut expr = expr!(
+    fn test_macro_creation() {
+        let mut expression = expr!(
             Addition,
-            expr!(
-                Addition,
-                expr!(x),
-                expr!(Multiplication, number!(2), expr!(x))
-            ),
-            expr!(Negation, expr!(Multiplication, number!(7), expr!(x))),
-            expr!(y),
-            expr!(Multiplication, number!(2), expr!(y)),
-            expr!(Multiplication, number!(3), expr!(y))
+            sym!("x"),
+            expr!(Multiplication, expr!(2), sym!("y"))
         );
-        if let Result::Ok(expr) = &mut expr {
-            expr.simplify();
+
+        if let Result::Ok(expression) = &mut expression {
+            assert_eq!(format!("{}", expression), "(+ x (* 2 y))");
         }
-        assert_eq!(format!("{}", expr.unwrap()), "(+ (* -4 x) (* 6 y))");
+    }
+
+    #[test]
+    fn test_subtraction() {
+        let mut expression = expr!(Subtraction, expr!(2), expr!(3));
+
+        if let Result::Ok(expression) = &mut expression {
+            expression.simplify();
+            assert_eq!(format!("{}", expression), "(+ 2 (- 3))");
+        }
     }
 }
-
-//                 Operator::Addition => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Addition {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands
-//                                     .push(Expression::OperatorExpression((*operand).clone()));
-//                             }
-//                         } else {
-//                             operands.push(operand.clone());
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Addition, operands).unwrap();
-//                 }
-//                 Operator::Subtraction => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Subtraction {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands.push(operand.clone());
-//                             }
-//                         } else {
-//                             operands.push(operand.clone());
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Subtraction, operands).unwrap();
-//                 }
-//                 Operator::Multiplication => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Multiplication {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands.push(operand.clone());
-//                             }
-//                         } else {
-//                             operands.push(operand.clone());
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Multiplication, operands).unwrap();
-//                 }
-//                 Operator::Division => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Division {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands.push(operand.clone());
-//                             }
-//                         } else {
-//                             operands.push(
-//                                 Expression::new(
-//                                     Operator::Exponentiation,
-//                                     vec![
-//                                         operand.clone(),
-//                                         Expression::new(
-//                                             Operator::Negation,
-//                                             vec![expr!(2).unwrap()],
-//                                         )
-//                                         .unwrap(),
-//                                     ],
-//                                 )
-//                                 .unwrap(),
-//                             );
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Division, operands).unwrap();
-//                 }
-//                 Operator::Exponentiation => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Exponentiation {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands.push(operand.clone());
-//                             }
-//                         } else {
-//                             operands.push(operand.clone());
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Exponentiation, operands).unwrap();
-//                 }
-//                 Operator::Logarithm => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Logarithm {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands.push(operand.clone());
-//                             }
-//                         } else {
-//                             operands.push(operand.clone());
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Logarithm, operands).unwrap();
-//                 }
-//                 Operator::Root => {
-//                     let mut operands = Vec::new();
-//                     for operand in &operator_expression.operands {
-//                         if let Expression::OperatorExpression(operand) = operand {
-//                             if operand.operator == Operator::Root {
-//                                 operands.extend(operand.operands.clone());
-//                             } else {
-//                                 operands.push(operand.clone());
-//                             }
-//                         } else {
-//                             operands.push(operand.clone());
-//                         }
-//                     }
-//                     *self = Expression::new(Operator::Root, operands).unwrap();
-//                 }
-//                 _ => {}
-//             }
-//         }
-//     }
-// }
