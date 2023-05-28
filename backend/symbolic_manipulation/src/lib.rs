@@ -4,7 +4,7 @@ use core::fmt;
 use std::collections::HashMap;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-struct Symbol {
+pub struct Symbol {
     name: String,
 }
 
@@ -21,7 +21,7 @@ impl fmt::Display for Symbol {
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
-enum Operator {
+pub enum Operator {
     Negation,
     Reciprocal,
     Factorial,
@@ -91,6 +91,22 @@ impl Operator {
             _ => None,
         }
     }
+
+    fn neutral_element(&self) -> Option<Expression> {
+        match self {
+            Operator::Addition => Some(Expression::Constant(0)),
+            Operator::Multiplication => Some(Expression::Constant(1)),
+            _ => None,
+        }
+    }
+
+    fn inverse(&self) -> Option<Operator> {
+        match self {
+            Operator::Addition => Some(Operator::Negation),
+            Operator::Multiplication => Some(Operator::Reciprocal),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Operator {
@@ -111,13 +127,13 @@ impl fmt::Display for Operator {
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
-struct OperatorExpression {
+pub struct OperatorExpression {
     operator: Operator,
     operands: Vec<Expression>,
 }
 
 impl OperatorExpression {
-    fn new(
+    pub fn new(
         operator: Operator,
         operands: Vec<Result<Expression, String>>,
     ) -> Result<OperatorExpression, String> {
@@ -167,13 +183,13 @@ impl fmt::Display for OperatorExpression {
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
-enum Expression {
+pub enum Expression {
     Constant(i128),
     Symbol(Symbol),
     OperatorExpression(OperatorExpression),
 }
 
-trait ConstructExpression {
+pub trait ConstructExpression {
     fn construct_expression(&self) -> Result<Expression, String>;
 }
 
@@ -230,7 +246,7 @@ impl Expression {
         format!("{}", self) == format!("{}", other)
     }
 
-    fn simplify(&mut self) {
+    pub fn simplify(&mut self) {
         if let Expression::OperatorExpression(operator_expression) = self {
             println!("simplifying {}", operator_expression);
             for operand in &mut operator_expression.operands {
@@ -244,6 +260,7 @@ impl Expression {
                     self.remove_subtraction();
                 }
                 Operator::Addition | Operator::Multiplication => {
+                    self.remove_neutral_element();
                     self.merge();
                     self.factor_out();
                 }
@@ -279,7 +296,6 @@ impl Expression {
             {
                 *self = expression;
             }
-            self.simplify();
         }
     }
 
@@ -290,6 +306,16 @@ impl Expression {
                 if operand.operator == Operator::Negation {
                     *self = operand.operands[0].clone();
                 }
+            }
+        }
+    }
+
+    fn remove_neutral_element(&mut self) {
+        if let Expression::OperatorExpression(operator_expression) = self {
+            if let Some(neutral_element) = operator_expression.operator.neutral_element() {
+                operator_expression
+                    .operands
+                    .retain(|operand| *operand != neutral_element);
             }
         }
     }
@@ -313,7 +339,6 @@ impl Expression {
             operator_expression.operands.clear();
             operator_expression.operands.extend(operands);
         }
-        self.simplify();
     }
 
     fn factor_out(&mut self) {
@@ -324,9 +349,18 @@ impl Expression {
                 let mut found_expressions = HashMap::<&Expression, i128>::new();
                 for operand in operator_expression.operands.iter() {
                     if let Expression::OperatorExpression(operand) = operand {
-                        if let Operator::Negation = operand.operator {
-                            // -x -> -1 * x
+                        if let Some(inverse_operator) = operand.operator.inverse() {
+                            // first check if the operand is (inverse_operator expression)
+                            if operand.operands.len() != 1 {
+                                continue;
+                            }
+                            if operand.operator != inverse_operator {
+                                continue;
+                            }
+                            // -> HashMap[expression] -= 1
+                            // e.g. x - x -> 0
                             found_expressions.safe_add(&operand.operands[0], -1);
+                            continue;
                         }
 
                         // first check if the operand is (distributive_operator constant expression)
@@ -379,7 +413,6 @@ impl Expression {
                 }
             }
         }
-        self.simplify();
     }
 
     // TODO: negation(x * const) -> x * -const <- found by sum_up
@@ -402,11 +435,13 @@ impl fmt::Display for Expression {
 }
 
 // macro to create trees of symbols and operators
+#[macro_export]
 macro_rules! sym {
     ($name: expr) => {
         Symbol::new($name.to_string()).construct_expression()
     };
 }
+#[macro_export]
 macro_rules! expr {
     ($constant: expr) => {
         $constant.construct_expression()
@@ -469,6 +504,32 @@ mod tests {
         if let Result::Ok(expression) = &mut expression {
             expression.simplify();
             assert_eq!(format!("{}", expression), "(+ 2 (- 3))");
+        }
+    }
+
+    #[test]
+    fn test_double_negation() {
+        let mut expression = expr!(
+            Negation,
+            expr!(
+                Negation,
+                expr!(Multiplication, expr!(Negation, sym!("x")), sym!("x"))
+            )
+        );
+
+        if let Result::Ok(expression) = &mut expression {
+            expression.simplify();
+            assert_eq!(format!("{}", expression), "2");
+        }
+    }
+
+    #[test]
+    fn test_sum_merge() {
+        let mut expression = expr!(Addition, sym!("x"), expr!(Addition, sym!("x"), sym!("y")));
+
+        if let Result::Ok(expression) = &mut expression {
+            expression.simplify();
+            assert_eq!(format!("{}", expression), "(+ (* 2 x) y)");
         }
     }
 }

@@ -1,5 +1,10 @@
-
+use symbolic_manipulation::*;
 
 fn main() {
-    println!("Hello, world!");
+    let mut expression = expr!(Subtraction, expr!(2), expr!(3));
+    if let Ok(result) = &mut expression {
+        result.simplify();
+        result.simplify();
+        println!("{}", result);
+    }
 }
