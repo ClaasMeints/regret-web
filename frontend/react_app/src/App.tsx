@@ -1,40 +1,36 @@
-import React from "react";
-
 import createEngine, {
-    DefaultLinkModel,
-    DefaultNodeModel,
     DiagramModel,
 } from "@projectstorm/react-diagrams";
 import { CanvasWidget } from "@projectstorm/react-canvas-core";
 import "./App.css";
 
+import { SvgNodeFactory, SvgNodeModel } from "./nodes/SvgNode";
+import { createItem } from "./items/ElectricItemFactory";
+
+function addItem(type: string, model: DiagramModel) {
+    const item = createItem(type);
+    if (!item) {
+        return;
+    }
+    var node = new SvgNodeModel({
+        item: item,
+    });
+    node.setPosition(400, 100);
+    model.addAll(node);
+}
+
+
 function App() {
     //1) setup the diagram engine
     var engine = createEngine();
+    engine.getNodeFactories().registerFactory(new SvgNodeFactory());
 
-    //2) setup the diagram model
+
     var model = new DiagramModel();
 
-    //3-A) create a default node
-    var node1 = new DefaultNodeModel({
-        name: "Node 1",
-        color: "rgb(0,192,255)",
-    });
-    node1.setPosition(100, 100);
-    let port1 = node1.addOutPort("Out");
-
-    //3-B) create another default node
-    var node2 = new DefaultNodeModel("Node 2", "rgb(192,255,0)");
-    let port2 = node2.addInPort("In");
-    node2.setPosition(400, 100);
-
-    // link the ports
-    let link1 = port1.link<DefaultLinkModel>(port2);
-    link1.getOptions().testName = "Test";
-    link1.addLabel("Hello World!");
-
-    //4) add the models to the root graph
-    model.addAll(node1, node2, link1);
+    addItem("resistor", model);
+    addItem("capacitor", model);
+    addItem("inductor", model);
 
     //5) load model into engine
     engine.setModel(model);
