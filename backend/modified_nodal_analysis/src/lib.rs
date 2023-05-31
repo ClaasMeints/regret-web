@@ -1,8 +1,11 @@
 use core::fmt;
 use num::complex::Complex64;
-use std::{collections::HashMap, sync::atomic::AtomicUsize};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::AtomicUsize,
+};
 
-static COUNTER: AtomicUsize = AtomicUsize::new(1);
+static ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Debug)]
 struct Component {
@@ -14,8 +17,8 @@ struct Component {
 impl Component {
     fn new(name: String, value: Complex64) -> Self {
         let terminal_ids = [
-            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ];
         Self {
             name,
@@ -23,6 +26,18 @@ impl Component {
             value,
         }
     }
+}
+
+fn print_vector(vector: &Vec<usize>) {
+    print!("[");
+    for (index, value) in vector.iter().enumerate() {
+        if index == vector.len() - 1 {
+            print!("{}", value);
+        } else {
+            print!("{}, ", value);
+        }
+    }
+    println!("]");
 }
 
 struct AdjacencyMatrix {
@@ -81,6 +96,56 @@ impl AdjacencyMatrix {
     fn remove_connection(&mut self, id_1: &usize, id_2: &usize) {
         self.set_value(id_1, id_2, false);
     }
+
+    fn connected_terminals(&self, id_1: &usize, skip_rows: &mut Vec<usize>) -> HashSet<usize> {
+        let mut connected_terminals: HashSet<usize> = HashSet::new();
+        if skip_rows.contains(id_1) {
+            // already connected to one node -> impossible to be connected to another
+            return connected_terminals;
+        }
+        // skip this row in the future
+        skip_rows.push(*id_1);
+        // get all connected terminals (horizontal)
+        if let Some(row) = self.matrix.get(id_1) {
+            for (id_2, value) in row {
+                if *value {
+                    connected_terminals.insert(*id_2);
+                }
+            }
+        }
+        // get all connected terminals (vertical)
+        for (id_2, row) in self.matrix.iter() {
+            if let Some(value) = row.get(id_1) {
+                if *value {
+                    connected_terminals.insert(*id_2);
+                }
+            }
+        }
+        let mut connected_sub_terminals: Vec<usize> = Vec::new();
+        for id_1 in connected_terminals.iter() {
+            // recursively get all connected terminals and mark them as skipped
+            connected_sub_terminals.extend(self.connected_terminals(id_1, skip_rows));
+        }
+        connected_terminals.extend(connected_sub_terminals);
+        connected_terminals
+    }
+
+    fn create_nodes(&self) -> Vec<Node> {
+        let mut nodes: Vec<Node> = Vec::new();
+        let mut skip_rows: Vec<usize> = Vec::new();
+        let mut node_index = 0;
+        for row_index in (1..=self.max_index).rev() {
+            if skip_rows.contains(&row_index) {
+                continue;
+            }
+            let connected_terminals = self.connected_terminals(&row_index, &mut skip_rows);
+            if !connected_terminals.is_empty() {
+                nodes.push(Node::new(node_index, connected_terminals));
+                node_index += 1;
+            }
+        }
+        nodes
+    }
 }
 
 impl fmt::Display for AdjacencyMatrix {
@@ -103,6 +168,36 @@ impl fmt::Display for AdjacencyMatrix {
                 }
             }
             writeln!(f)?;
+        }
+        Ok(())
+    }
+}
+
+struct Node {
+    id: usize,
+    terminal_ids: HashSet<usize>,
+    voltage: Option<Complex64>,
+}
+
+impl Node {
+    fn new(id: usize, terminal_ids: HashSet<usize>) -> Self {
+        Self {
+            id,
+            terminal_ids,
+            voltage: None,
+        }
+    }
+
+    fn is_attached(&self, terminal_id: &usize) -> bool {
+        self.terminal_ids.contains(terminal_id)
+    }
+}
+
+impl fmt::Display for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Node {:3}:", self.id)?;
+        for terminal_id in self.terminal_ids.iter() {
+            write!(f, " {:3}", terminal_id)?;
         }
         Ok(())
     }
@@ -157,5 +252,10 @@ mod tests {
         circuit.adjacency_matrix.add_connection(&7, &8);
 
         println!("{}", circuit);
+
+        let nodes = circuit.adjacency_matrix.create_nodes();
+        for node in nodes.iter() {
+            println!("{}", node);
+        }
     }
 }
