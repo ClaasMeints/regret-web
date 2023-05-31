@@ -2,33 +2,24 @@ use core::fmt;
 use num::complex::Complex64;
 use std::{collections::HashMap, sync::atomic::AtomicUsize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct Terminal {
-    id: usize,
-}
+static COUNTER: AtomicUsize = AtomicUsize::new(1);
 
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-impl Terminal {
-    fn new() -> Self {
-        Self {
-            id: COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        }
-    }
-}
-
+#[derive(Debug)]
 struct Component {
     name: String,
-    terminals: [Terminal; 2],
+    terminal_ids: [usize; 2],
     value: Complex64,
 }
 
 impl Component {
     fn new(name: String, value: Complex64) -> Self {
-        let terminals = [Terminal::new(), Terminal::new()];
+        let terminal_ids = [
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ];
         Self {
             name,
-            terminals,
+            terminal_ids,
             value,
         }
     }
@@ -38,6 +29,7 @@ struct AdjacencyMatrix {
     // the matrix is in triangular form -> no redundant information (also no diagonal)
     matrix: HashMap<usize, HashMap<usize, bool>>,
     default_vector: HashMap<usize, bool>,
+    max_index: usize,
 }
 
 impl AdjacencyMatrix {
@@ -45,12 +37,14 @@ impl AdjacencyMatrix {
         Self {
             matrix: HashMap::new(),
             default_vector: HashMap::new(),
+            max_index: 0,
         }
     }
 
     fn add_terminal(&mut self, id: usize) {
         self.matrix.insert(id, self.default_vector.clone());
         self.default_vector.insert(id, false);
+        self.max_index += 1;
     }
 
     fn remove_terminal(&mut self, id: &usize) {
@@ -92,19 +86,25 @@ impl AdjacencyMatrix {
 impl fmt::Display for AdjacencyMatrix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Terminal ___:")?;
-        for i in 1..self.matrix.len() {
-            write!(f, " {:3} ", i)?;
+        for column_index in 1..=self.max_index {
+            write!(f, " {:3}", column_index)?;
         }
         writeln!(f)?;
         // enumerate HashMap
-        for (index, terminal_vector) in self.matrix.values().enumerate() {
-            write!(f, "Terminal {:3}:", index + 1)?;
-            for entry in terminal_vector.values() {
-                write!(f, " {:3}", *entry as usize)?;
+        for row_index in 1..=self.max_index {
+            write!(f, "Terminal {:3}:", row_index)?;
+            if let Some(terminal_vector) = self.matrix.get(&row_index) {
+                for column_index in 1..=self.max_index {
+                    if let Some(entry) = terminal_vector.get(&column_index) {
+                        write!(f, " {:3}", *entry as usize)?;
+                    } else {
+                        write!(f, "    ")?;
+                    }
+                }
             }
             writeln!(f)?;
         }
-        writeln!(f)
+        Ok(())
     }
 }
 
@@ -123,8 +123,8 @@ impl Circuit {
 
     fn add_component(&mut self) {
         let component = Component::new(String::from("R"), Complex64::new(1.0, 0.0));
-        for terminal in component.terminals.iter() {
-            self.adjacency_matrix.add_terminal(terminal.id)
+        for id in component.terminal_ids.iter() {
+            self.adjacency_matrix.add_terminal(*id);
         }
         self.components.push(component);
     }
@@ -143,8 +143,19 @@ mod tests {
     #[test]
     fn test_construction() {
         let mut circuit = Circuit::new();
-        print!("{}", circuit);
+
         circuit.add_component();
+        circuit.add_component();
+        circuit.add_component();
+        circuit.add_component();
+
+        // circuit.adjacency_matrix.remove_terminal(&3);
+
+        circuit.adjacency_matrix.add_connection(&1, &2);
+        circuit.adjacency_matrix.add_connection(&1, &5);
+        circuit.adjacency_matrix.add_connection(&3, &7);
+        circuit.adjacency_matrix.add_connection(&7, &8);
+
         println!("{}", circuit);
     }
 }
