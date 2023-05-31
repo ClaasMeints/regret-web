@@ -9,6 +9,7 @@
             "backend/engine/Cargo.toml",
             "backend/actix_api/Cargo.toml",
             "backend/symbolic_manipulation/Cargo.toml",
+            "backend/modified_nodal_analysis/Cargo.toml",
         ]
     }
 }

@@ -1,4 +1,5 @@
 import createEngine, {
+    DefaultNodeModel,
     DiagramModel,
 } from "@projectstorm/react-diagrams";
 import { CanvasWidget } from "@projectstorm/react-canvas-core";
@@ -31,6 +32,15 @@ function App() {
     addItem("resistor", model);
     addItem("capacitor", model);
     addItem("inductor", model);
+
+    var node = new DefaultNodeModel({
+        name: "Node 1",
+        color: "rgb(0,192,255)",
+    });
+    var port = node.addOutPort("Out");
+    node.setPosition(100, 100);
+
+    model.addAll(node);
 
     //5) load model into engine
     engine.setModel(model);
