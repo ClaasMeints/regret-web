@@ -1,9 +1,9 @@
 use core::fmt;
 use num::complex::Complex64;
-use std::collections::{HashMap, HashSet};
 
 mod graph;
-use crate::graph::*;
+use crate::graph::adjacency_matrix::AdjacencyMatrix;
+use crate::graph::component::Component;
 
 struct Circuit {
     components: Vec<Component>,
@@ -11,16 +11,16 @@ struct Circuit {
 }
 
 impl Circuit {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             components: Vec::new(),
             adjacency_matrix: AdjacencyMatrix::new(),
         }
     }
 
-    fn add_component(&mut self) {
+    pub fn add_component(&mut self) {
         let component = Component::new(String::from("R"), Complex64::new(1.0, 0.0));
-        for id in component.terminal_ids.iter() {
+        for id in component.ids().iter() {
             self.adjacency_matrix.add_terminal(*id);
         }
         self.components.push(component);

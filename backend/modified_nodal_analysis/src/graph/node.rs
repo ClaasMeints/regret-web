@@ -1,5 +1,6 @@
 use num::complex::Complex64;
 use std::collections::HashSet;
+use std::fmt;
 pub struct Node {
     id: usize,
     terminal_ids: HashSet<usize>,
@@ -7,7 +8,7 @@ pub struct Node {
 }
 
 impl Node {
-    fn new(id: usize, terminal_ids: HashSet<usize>) -> Self {
+    pub fn new(id: usize, terminal_ids: HashSet<usize>) -> Self {
         Self {
             id,
             terminal_ids,

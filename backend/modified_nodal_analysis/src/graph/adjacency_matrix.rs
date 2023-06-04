@@ -1,10 +1,8 @@
-
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 
 use crate::graph::node::Node;
-use crate::graph::component::Component;
 
 pub struct AdjacencyMatrix {
     // the matrix is in triangular form -> no redundant information (also no diagonal)
@@ -14,7 +12,7 @@ pub struct AdjacencyMatrix {
 }
 
 impl AdjacencyMatrix {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             matrix: HashMap::new(),
             default_vector: HashMap::new(),
@@ -22,7 +20,7 @@ impl AdjacencyMatrix {
         }
     }
 
-    fn add_terminal(&mut self, id: usize) {
+    pub fn add_terminal(&mut self, id: usize) {
         self.matrix.insert(id, self.default_vector.clone());
         self.default_vector.insert(id, false);
         self.max_index += 1;
@@ -55,7 +53,7 @@ impl AdjacencyMatrix {
         Err("Could not set value".to_string())
     }
 
-    fn add_connection(&mut self, id_1: &usize, id_2: &usize) {
+    pub fn add_connection(&mut self, id_1: &usize, id_2: &usize) {
         self.set_value(id_1, id_2, true);
     }
 
@@ -96,7 +94,7 @@ impl AdjacencyMatrix {
         connected_terminals
     }
 
-    fn create_nodes(&self) -> Vec<Node> {
+    pub fn create_nodes(&self) -> Vec<Node> {
         let mut nodes: Vec<Node> = Vec::new();
         let mut skip_rows: Vec<usize> = Vec::new();
         let mut node_index = 0;
